@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Use Fraunces as the preferred font on web; the actual font files are loaded
+   at runtime via @expo-google-fonts/Fraunces, so this provides a fallback
+   while the JS loader runs. */
+html,
+body,
+#root {
+  font-family:
+    "Fraunces",
+    Fraunces,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    "Noto Sans",
+    "Apple Color Emoji",
+    "Segoe UI Emoji",
+    "Segoe UI Symbol",
+    sans-serif;
+}
