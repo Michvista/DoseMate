@@ -1,106 +1,175 @@
-import {
-  eachDayOfInterval,    // generates every date between two dates
-  endOfMonth,           // last day of a given month
-  format,               // formats a Date into a string
-  getDay,               // gets day of week (0=Sun, 6=Sat)
-  isSameDay,            // checks if two dates are the same calendar day
-  isSameMonth,          // checks if two dates are in the same month
-  startOfMonth,         // first day of a given month
-  subMonths,            // subtracts months from a date
-  addMonths,            // adds months to a date
-} from "date-fns";
-import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+// components/stats/CalendarCard.tsx
+// Full/partial/missed status is now CALCULATED from real dose logs.
+//
+// Logic per day:
+//   full    → all scheduled doses are TAKEN
+//   partial → at least 1 TAKEN but not all
+//   missed  → 0 TAKEN and at least 1 MISSED/SKIPPED (day is in the past)
+//   none    → no logs for that day, or all UPCOMING (future)
+
+import { useGuest } from "@/lib/context/GuestContext";
+import { API_BASE_URL } from "@/lib/api/config";
+import { APIDoseLog } from "@/lib/api/types";
 import { Feather } from "@expo/vector-icons";
+import {
+  addMonths,
+  eachDayOfInterval,
+  endOfMonth,
+  format,
+  getDay,
+  isSameDay,
+  isSameMonth,
+  startOfMonth,
+  subMonths,
+} from "date-fns";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
 type DayStatus = "full" | "missed" | "partial" | "none";
 
-// ── Dummy status data ─────────────────────────────────────────
-// Keyed by "yyyy-MM-dd". In production, fetch this from your backend.
-const today = new Date();
-const y = today.getFullYear();
-const m = today.getMonth(); // 0-indexed month
-
-const STATUS_DATA: Record<string, DayStatus> = {
-  // Full days — all doses taken
-  [format(new Date(y, m,  1), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m,  2), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m,  3), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m,  4), "yyyy-MM-dd")]: "partial",
-  [format(new Date(y, m,  5), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m,  6), "yyyy-MM-dd")]: "missed",
-  [format(new Date(y, m,  7), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m,  8), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m,  9), "yyyy-MM-dd")]: "partial",
-  [format(new Date(y, m, 10), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m, 11), "yyyy-MM-dd")]: "missed",
-  [format(new Date(y, m, 12), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m, 13), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m, 14), "yyyy-MM-dd")]: "partial",
-  [format(new Date(y, m, 15), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m, 16), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m, 17), "yyyy-MM-dd")]: "missed",
-  [format(new Date(y, m, 18), "yyyy-MM-dd")]: "full",
-  [format(new Date(y, m, 19), "yyyy-MM-dd")]: "partial",
-  [format(new Date(y, m, 20), "yyyy-MM-dd")]: "full",
-  // days after today stay "none" (future)
-};
-
 const DAY_LABELS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
-
-// date-fns getDay() → 0=Sun, 1=Mon…6=Sat
-// We want 0=Mon so we shift: (0+6)%7=6(Sun), (1+6)%7=0(Mon), etc.
 const getMondayIndex = (date: Date) => (getDay(date) + 6) % 7;
 
-const CalendarCard = () => {
+/** Fetch all dose logs for a given month from the backend */
+async function fetchMonthLogs(
+  guestId: string,
+  year: number,
+  month: number, // 0-indexed
+): Promise<APIDoseLog[]> {
+  const start = format(new Date(year, month, 1), "yyyy-MM-dd");
+  const end = format(new Date(year, month + 1, 0), "yyyy-MM-dd"); // last day
+  const res = await fetch(
+    `${API_BASE_URL}/dose-logs?dateFrom=${start}&dateTo=${end}`,
+    { headers: { "x-guest-id": guestId } },
+  );
+  if (!res.ok) return [];
+  return res.json();
+}
+
+/**
+ * Calculate status for every day in the month from the log array.
+ * Returns a map keyed by "yyyy-MM-dd".
+ */
+function buildStatusMap(
+  logs: APIDoseLog[],
+  year: number,
+  month: number,
+): Record<string, DayStatus> {
+  const map: Record<string, DayStatus> = {};
   const today = new Date();
 
-  // currentMonth drives which month is displayed; starts as this month
+  // Group logs by date key
+  const byDay: Record<string, APIDoseLog[]> = {};
+  for (const log of logs) {
+    const key = format(new Date(log.scheduledTime), "yyyy-MM-dd");
+    if (!byDay[key]) byDay[key] = [];
+    byDay[key].push(log);
+  }
+
+  const allDays = eachDayOfInterval({
+    start: new Date(year, month, 1),
+    end: new Date(year, month + 1, 0),
+  });
+
+  for (const day of allDays) {
+    // Future days are always "none"
+    if (day > today) {
+      map[format(day, "yyyy-MM-dd")] = "none";
+      continue;
+    }
+
+    const key = format(day, "yyyy-MM-dd");
+    const dayLogs = byDay[key] ?? [];
+
+    if (dayLogs.length === 0) {
+      map[key] = "none";
+      continue;
+    }
+
+    const taken = dayLogs.filter((l) => l.status === "TAKEN").length;
+    const total = dayLogs.filter((l) => l.status !== "UPCOMING").length;
+    const scheduled = dayLogs.length;
+
+    if (taken === 0) {
+      map[key] = "missed";
+    } else if (taken === scheduled) {
+      map[key] = "full";
+    } else {
+      map[key] = "partial";
+    }
+  }
+
+  return map;
+}
+
+const CalendarCard = () => {
+  const { guestId } = useGuest();
+  const today = new Date();
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(today));
+  const [statusMap, setStatusMap] = useState<Record<string, DayStatus>>({});
+  const [loading, setLoading] = useState(false);
 
-  // Build an array of every day in the displayed month
+  // Fetch logs whenever the displayed month changes
+  useEffect(() => {
+    if (!guestId) return;
+    let cancelled = false;
+    setLoading(true);
+    fetchMonthLogs(guestId, currentMonth.getFullYear(), currentMonth.getMonth())
+      .then((logs) => {
+        if (!cancelled) {
+          setStatusMap(
+            buildStatusMap(
+              logs,
+              currentMonth.getFullYear(),
+              currentMonth.getMonth(),
+            ),
+          );
+        }
+      })
+      .catch(() => {}) // fail silently — calendar stays empty
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [guestId, currentMonth]);
+
+  // ── Build calendar grid ──────────────────────────────────────────────────
   const monthStart = startOfMonth(currentMonth);
-  const monthEnd   = endOfMonth(currentMonth);
-  const allDays    = eachDayOfInterval({ start: monthStart, end: monthEnd });
-
-  // How many empty slots to add before the 1st so Monday is always column 0
+  const monthEnd = endOfMonth(currentMonth);
+  const allDays = eachDayOfInterval({ start: monthStart, end: monthEnd });
   const startPadding = getMondayIndex(monthStart);
+
   const paddedDays: (Date | null)[] = [
-    ...Array(startPadding).fill(null), // null = empty cell
+    ...Array(startPadding).fill(null),
     ...allDays,
   ];
-
-  // Slice paddedDays into chunks of 7 (one per week row)
   const weeks: (Date | null)[][] = [];
   for (let i = 0; i < paddedDays.length; i += 7) {
     weeks.push(paddedDays.slice(i, i + 7));
   }
-  // Make the last row exactly 7 cells wide
   const lastWeek = weeks[weeks.length - 1];
   while (lastWeek.length < 7) lastWeek.push(null);
 
-  // Look up a date's status, default to "none" if not in STATUS_DATA
   const getStatus = (date: Date): DayStatus =>
-    STATUS_DATA[format(date, "yyyy-MM-dd")] ?? "none";
+    statusMap[format(date, "yyyy-MM-dd")] ?? "none";
 
   return (
     <View className="mx-4 mb-4 rounded-3xl bg-white p-5 shadow-sm">
-
-      {/* ── Month navigation header ── */}
+      {/* Month navigation header */}
       <View className="flex-row justify-between items-center mb-4">
         <Text
           className="text-lg text-dark"
           style={{ fontFamily: "Fraunces_700Bold" }}>
-          {format(currentMonth, "MMMM yyyy")}  {/* e.g. "April 2026" */}
+          {format(currentMonth, "MMMM yyyy")}
         </Text>
         <View className="flex-row gap-1">
-          {/* Go back one month */}
           <Pressable
             onPress={() => setCurrentMonth(subMonths(currentMonth, 1))}
             className="w-8 h-8 rounded-full bg-light1 items-center justify-center">
             <Feather name="chevron-left" size={16} color="#9333EA" />
           </Pressable>
-          {/* Go forward one month */}
           <Pressable
             onPress={() => setCurrentMonth(addMonths(currentMonth, 1))}
             className="w-8 h-8 rounded-full bg-light1 items-center justify-center">
@@ -109,7 +178,14 @@ const CalendarCard = () => {
         </View>
       </View>
 
-      {/* ── Day-of-week labels row ── */}
+      {/* Loading overlay */}
+      {loading && (
+        <View style={{ alignItems: "center", paddingVertical: 8 }}>
+          <ActivityIndicator color="#9333EA" size="small" />
+        </View>
+      )}
+
+      {/* Day-of-week labels */}
       <View className="flex-row mb-2">
         {DAY_LABELS.map((d) => (
           <View key={d} className="flex-1 items-center">
@@ -118,48 +194,47 @@ const CalendarCard = () => {
         ))}
       </View>
 
-      {/* ── Calendar grid ── */}
+      {/* Calendar grid */}
       {weeks.map((week, wi) => (
         <View key={wi} className="flex-row mb-1">
           {week.map((date, di) => {
+            if (!date)
+              return <View key={di} className="flex-1 items-center h-10" />;
 
-            // null cells = padding before/after month days
-            if (!date) return <View key={di} className="flex-1 items-center h-10" />;
-
-            const status  = getStatus(date);
+            const status = getStatus(date);
             const isToday = isSameDay(date, today);
-            const inMonth = isSameMonth(date, currentMonth); // false for overflow padding
+            const inMonth = isSameMonth(date, currentMonth);
 
-            // Circle background — today overrides all status colors
             const circleClass = isToday
-              ? "bg-tabs-100"                          // solid purple circle
+              ? "bg-tabs-100"
               : status === "full"
-                ? "bg-[#C4B5FD]"                       // light purple fill
+                ? "bg-[#C4B5FD]"
                 : status === "partial"
-                  ? "bg-[#EDE9FE]"                     // very light purple
+                  ? "bg-[#EDE9FE]"
                   : status === "missed"
-                    ? "bg-white border border-slate-200" // white with border
-                    : "bg-transparent";                 // no background for future/empty
+                    ? "bg-white border border-slate-200"
+                    : "bg-transparent";
 
-            // Number text color
             const textClass = isToday
               ? "text-white font-extrabold"
               : status === "full" || status === "partial"
                 ? "text-[#7c3aed] font-semibold"
                 : status === "missed"
                   ? "text-gray-400"
-                  : inMonth ? "text-gray-400" : "text-gray-200"; // dimmed if out of month
+                  : inMonth
+                    ? "text-gray-400"
+                    : "text-gray-200";
 
             return (
               <View key={di} className="flex-1 items-center">
-                <View className={`w-9 h-9 rounded-full items-center justify-center ${circleClass}`}>
+                <View
+                  className={`w-9 h-9 rounded-full items-center justify-center ${circleClass}`}>
                   <Text
                     className={`text-[13px] ${textClass}`}
                     style={{ fontFamily: "Fraunces_400Regular" }}>
-                    {format(date, "d")} {/* just the day number, e.g. "6" */}
+                    {format(date, "d")}
                   </Text>
                 </View>
-                {/* Partial indicator — a dash below the circle */}
                 {status === "partial" && !isToday && (
                   <View className="w-4 h-[2px] rounded-full bg-[#C4B5FD] mt-[2px]" />
                 )}
@@ -169,7 +244,7 @@ const CalendarCard = () => {
         </View>
       ))}
 
-      {/* ── Legend ── */}
+      {/* Legend */}
       <View className="flex-row justify-center gap-4 mt-3 pt-3 border-t border-light1">
         <View className="flex-row items-center gap-1">
           <View className="w-2.5 h-2.5 rounded-full bg-[#C4B5FD]" />
@@ -177,11 +252,15 @@ const CalendarCard = () => {
         </View>
         <View className="flex-row items-center gap-1">
           <View className="w-2.5 h-2.5 rounded-full bg-white border border-slate-200" />
-          <Text className="text-[10px] text-gray-400 tracking-wide">MISSED</Text>
+          <Text className="text-[10px] text-gray-400 tracking-wide">
+            MISSED
+          </Text>
         </View>
         <View className="flex-row items-center gap-1">
           <View className="w-4 h-[2px] rounded-full bg-[#C4B5FD]" />
-          <Text className="text-[10px] text-gray-400 tracking-wide">PARTIAL</Text>
+          <Text className="text-[10px] text-gray-400 tracking-wide">
+            PARTIAL
+          </Text>
         </View>
       </View>
     </View>

@@ -1,8 +1,14 @@
+// components/meds/EditMedicationScreen.tsx
 import { MedicationIcons } from "@/lib/MedicationIcons";
+import { APIMedication } from "@/lib/api/types";
+import { useMedications } from "@/lib/hooks/useMedications";
 import { Feather } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { format } from "date-fns";
 import { useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -13,60 +19,146 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
-import { fmt, fmtDate, makeTime, SCHEDULE_PRESETS } from "../../lib/data";
-import { DoseTime, Medication } from "../../lib/types";
 
-interface EditMedicationScreenProps {
-  med: Medication;
-  onBack: () => void;
-  onSave?: (updated: Medication) => void;
+// ── Local types (self-contained, no lib/types dependency) ─────────────────────
+type DoseTime = { id: string; time: Date; label: string };
+
+// ── Schedule presets (local copy, no lib/data dependency) ─────────────────────
+type ScheduleType = "Once Daily" | "Morning & Evening" | "Three Times";
+
+const SCHEDULE_PRESETS: { label: string; apiValue: ScheduleType }[] = [
+  { label: "ONCE DAILY", apiValue: "Once Daily" },
+  { label: "MORNING & EVENING", apiValue: "Morning & Evening" },
+  { label: "THREE TIMES", apiValue: "Three Times" },
+];
+
+// Maps backend scheduleType → preset array index
+const PRESET_INDEX: Record<string, number> = {
+  "Once Daily": 0,
+  "Morning & Evening": 1,
+  "Three Times": 2,
+};
+
+// Default dose rows per preset (used when the preset chip is tapped)
+const PRESET_DEFAULTS: DoseTime[][] = [
+  [{ id: "0", time: makeTime(8), label: "MORNING" }],
+  [
+    { id: "0", time: makeTime(8), label: "MORNING" },
+    { id: "1", time: makeTime(20), label: "EVENING" },
+  ],
+  [
+    { id: "0", time: makeTime(8), label: "MORNING" },
+    { id: "1", time: makeTime(14), label: "AFTERNOON" },
+    { id: "2", time: makeTime(20), label: "EVENING" },
+  ],
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function makeTime(h: number, m = 0): Date {
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d;
 }
 
-export const EditMedicationScreen = ({
-  med,
-  onBack,
-  onSave,
-}: EditMedicationScreenProps) => {
+/** "HH:MM" string → Date set to today */
+function parseHHMM(s: string): Date {
+  const [h, m] = s.split(":").map(Number);
+  return makeTime(h, m);
+}
+
+/** Date → "HH:MM" for the API */
+function toHHMM(d: Date): string {
+  return d.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+/** Date → "08:00 AM" for display */
+function fmt(d: Date): string {
+  return d.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+/** Date → "MM/dd/yy" for display */
+function fmtDate(d: Date): string {
+  return format(d, "MM/dd/yy");
+}
+
+// ── Icon color by medication type ─────────────────────────────────────────────
+const TYPE_COLORS: Record<string, string> = {
+  pill: "#9333EA",
+  capsule: "#EF4444",
+  liquid: "#3B82F6",
+  injection: "#F59E0B",
+  patch: "#10B981",
+};
+
+// ── Component ─────────────────────────────────────────────────────────────────
+interface Props {
+  med: APIMedication;
+  onBack: () => void;
+  onSave?: (updated: APIMedication) => void;
+}
+
+export const EditMedicationScreen = ({ med, onBack, onSave }: Props) => {
+  const { updateMedication } = useMedications();
+  const [saving, setSaving] = useState(false);
+
+  // Form state — pre-filled from the APIMedication passed in
   const [medName, setMedName] = useState(med.name);
-  const [dosage, setDosage] = useState(med.dosage);
+  const [dosageValue, setDosageValue] = useState(String(med.dosage.value));
   const [notes, setNotes] = useState(med.notes ?? "");
-  const [activePreset, setActivePreset] = useState(1);
+
+  const [activePreset, setActivePreset] = useState(
+    PRESET_INDEX[med.scheduleType] ?? 1,
+  );
+
+  // Parse existing "HH:MM" strings back into Date objects for the picker
   const [doses, setDoses] = useState<DoseTime[]>(
-    SCHEDULE_PRESETS[1].times.map((t, i) => ({ ...t, id: String(i) })),
+    med.times.map((t, i) => ({
+      id: String(i),
+      time: parseHHMM(t),
+      label: ["MORNING", "AFTERNOON", "EVENING", "CUSTOM"][i] ?? "CUSTOM",
+    })),
   );
 
-  const [startDate, setStartDate] = useState<Date>(new Date("2023-10-01"));
-  const [endDate, setEndDate] = useState<Date>(new Date("2023-12-31"));
-
-  // Temp values for pickers — committed on "Done"
-  const [tempStartDate, setTempStartDate] = useState<Date>(
-    new Date("2023-10-01"),
+  const [startDate, setStartDate] = useState<Date>(
+    med.startDate ? new Date(med.startDate) : new Date(),
   );
-  const [tempEndDate, setTempEndDate] = useState<Date>(new Date("2023-12-31"));
-
+  const [endDate, setEndDate] = useState<Date | null>(
+    med.endDate ? new Date(med.endDate) : null,
+  );
+  const [tempStartDate, setTempStartDate] = useState<Date>(startDate);
+  const [tempEndDate, setTempEndDate] = useState<Date>(endDate ?? new Date());
   const [editingDose, setEditingDose] = useState<string | null>(null);
   const [tempTime, setTempTime] = useState<Date>(new Date());
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
 
+  // ── Handlers ────────────────────────────────────────────────────────────────
   const handlePreset = (i: number) => {
     setActivePreset(i);
     setDoses(
-      SCHEDULE_PRESETS[i].times.map((t, idx) => ({
-        ...t,
-        id: String(Date.now() + idx),
+      PRESET_DEFAULTS[i].map((d) => ({
+        ...d,
+        id: String(Date.now() + Math.random()),
       })),
     );
   };
 
   const addDose = () =>
-    setDoses((prev) => [
-      ...prev,
+    setDoses((p) => [
+      ...p,
       { id: String(Date.now()), time: makeTime(12), label: "CUSTOM" },
     ]);
 
   const removeDose = (id: string) =>
-    setDoses((prev) => prev.filter((d) => d.id !== id));
+    setDoses((p) => p.filter((d) => d.id !== id));
 
   const openTimePicker = (dose: DoseTime) => {
     setTempTime(dose.time);
@@ -75,11 +167,41 @@ export const EditMedicationScreen = ({
 
   const confirmTime = () => {
     if (!editingDose) return;
-    setDoses((prev) =>
-      prev.map((d) => (d.id === editingDose ? { ...d, time: tempTime } : d)),
+    setDoses((p) =>
+      p.map((d) => (d.id === editingDose ? { ...d, time: tempTime } : d)),
     );
     setEditingDose(null);
   };
+
+  const handleSave = async () => {
+    if (!medName.trim())
+      return Alert.alert("Missing", "Enter a medication name.");
+    if (!dosageValue.trim()) return Alert.alert("Missing", "Enter a dosage.");
+
+    try {
+      setSaving(true);
+      const updated = await updateMedication(med._id, {
+        name: medName.trim(),
+        dosage: { value: parseFloat(dosageValue), unit: med.dosage.unit },
+        scheduleType: SCHEDULE_PRESETS[activePreset].apiValue,
+        times: doses.map((d) => toHHMM(d.time)),
+        startDate: startDate.toISOString(),
+        endDate: endDate?.toISOString(),
+        notes: notes.trim() || undefined,
+      });
+      if (updated && onSave) onSave(updated);
+      else onBack();
+    } catch (err: any) {
+      Alert.alert("Error", err.message ?? "Could not save changes.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── Derived display values ───────────────────────────────────────────────────
+  const iconColor = TYPE_COLORS[med.type] ?? "#9333EA";
+  const MedIcon =
+    (MedicationIcons as any)[med.type] ?? (MedicationIcons as any).pill;
 
   return (
     <View className="flex-1 bg-[#F8F6FF]" style={{ paddingTop: 56 }}>
@@ -115,7 +237,7 @@ export const EditMedicationScreen = ({
             color: "#9CA3AF",
             fontFamily: "Fraunces_400Regular",
           }}>
-          Last updated: 2 days ago
+          {format(new Date(med.updatedAt), "MMM d, yyyy")}
         </Text>
       </View>
 
@@ -131,31 +253,26 @@ export const EditMedicationScreen = ({
           }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled">
-          {/* Icon preview */}
+          {/* ── Icon preview ── */}
           <View
             style={{
-              backgroundColor: med.color + "20",
+              backgroundColor: iconColor + "20",
               borderRadius: 16,
               alignItems: "center",
               justifyContent: "center",
               paddingVertical: 24,
               marginTop: 4,
             }}>
-            {(() => {
-              const Icon =
-                (MedicationIcons as any)[med.icon || "pill"] ??
-                (MedicationIcons as any).pill;
-              return <Icon size={48} color={med.color} />;
-            })()}
+            <MedIcon size={48} color={iconColor} />
             <Text
               style={{
                 fontSize: 10,
-                color: med.color,
+                color: iconColor,
                 fontFamily: "Fraunces_700Bold",
                 marginTop: 8,
                 letterSpacing: 2,
               }}>
-              {(med.icon || "PILL").toUpperCase()}
+              {med.type.toUpperCase()}
             </Text>
           </View>
 
@@ -170,7 +287,7 @@ export const EditMedicationScreen = ({
             }}
           />
 
-          {/* Medication name */}
+          {/* ── Medication name ── */}
           <View
             style={{
               backgroundColor: "#fff",
@@ -201,7 +318,7 @@ export const EditMedicationScreen = ({
             />
           </View>
 
-          {/* Dosage */}
+          {/* ── Dosage ── */}
           <View
             style={{
               backgroundColor: "#fff",
@@ -218,12 +335,12 @@ export const EditMedicationScreen = ({
                 fontFamily: "Fraunces_700Bold",
                 marginBottom: 4,
               }}>
-              DOSAGE (MG)
+              DOSAGE ({med.dosage.unit.toUpperCase()})
             </Text>
             <View className="flex-row items-center">
               <TextInput
-                value={dosage}
-                onChangeText={setDosage}
+                value={dosageValue}
+                onChangeText={setDosageValue}
                 keyboardType="numeric"
                 returnKeyType="done"
                 style={{
@@ -246,164 +363,133 @@ export const EditMedicationScreen = ({
                     color: "#9333EA",
                     fontFamily: "Fraunces_700Bold",
                   }}>
-                  mg
+                  {med.dosage.unit}
                 </Text>
               </View>
             </View>
           </View>
 
-          {/* Daily Schedule */}
+          {/* ── Schedule ── */}
           <View
             style={{
-              backgroundColor: "#EDE9FE",
+              backgroundColor: "#fff",
               borderRadius: 16,
-              padding: 16,
+              paddingHorizontal: 16,
+              paddingTop: 12,
+              paddingBottom: 16,
             }}>
-            <View className="flex-row items-center justify-between mb-3">
-              <Text
+            {/* Preset chips */}
+            <View className="flex-row items-center justify-between mb-3 mr-4">
+              <Text className="mr-4 pr-4"
                 style={{
-                  fontSize: 15,
+                  fontSize: 10,
+                  letterSpacing: 2,
+                  color: "#9333EA",
                   fontFamily: "Fraunces_700Bold",
-                  color: "#1A0A2E",
-                }} className="mr-3">
-                Daily Schedule
+                }}>
+                DAILY SCHEDULE
               </Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View className="flex-row gap-2">
-                  {SCHEDULE_PRESETS.map((p, i) => (
-                    <TouchableOpacity
-                      key={i}
-                      onPress={() => handlePreset(i)}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={true}
+              >
+                  <View className="flex-row gap-3">
+                {SCHEDULE_PRESETS.map((p, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    onPress={() => handlePreset(i)}
+                    className="px-2 py-1 rounded-full"
+                    style={{
+                      backgroundColor:
+                        activePreset === i ? "#9333EA" : "#EDE9FE",
+                    }}>
+                    <Text
                       style={{
-                        paddingHorizontal: 10,
-                        paddingVertical: 4,
-                        borderRadius: 20,
-                        backgroundColor:
-                          activePreset === i ? "#9333EA" : "#fff",
-                        borderWidth: activePreset !== i ? 1 : 0,
-                        borderColor: "#E2D9F3",
+                        fontFamily: "Fraunces_700Bold",
+                        fontSize: 8,
+                        color: activePreset === i ? "#fff" : "#9333EA",
                       }}>
-                      <Text
-                        style={{
-                          fontSize: 9,
-                          fontFamily: "Fraunces_700Bold",
-                          color: activePreset === i ? "#fff" : "#9CA3AF",
-                          letterSpacing: 0.5,
-                        }}>
-                        {p.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                      {p.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                  </View>
               </ScrollView>
             </View>
 
-            <View style={{ gap: 8 }}>
-              {doses.map((dose) => (
-                <TouchableOpacity
-                  key={dose.id}
-                  onPress={() => openTimePicker(dose)}
-                  style={{
-                    backgroundColor: "#fff",
-                    borderRadius: 12,
-                    paddingHorizontal: 16,
-                    paddingVertical: 12,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}>
-                  <View className="flex-row items-center gap-2.5">
-                    <View
-                      style={{
-                        width: 32,
-                        height: 32,
-                        borderRadius: 16,
-                        backgroundColor: "#EDE9FE",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}>
-                      {dose.label === "MORNING" ? (
-                        <Feather name="sun" size={14} color="#9333EA" />
-                      ) : dose.label === "EVENING" ? (
-                        <Feather name="moon" size={14} color="#9333EA" />
-                      ) : (
-                        <Feather name="clock" size={14} color="#9333EA" />
-                      )}
-                    </View>
-                    <Text
-                      style={{
-                        fontSize: 15,
-                        fontFamily: "Fraunces_700Bold",
-                        color: "#1A0A2E",
-                      }}>
-                      {fmt(dose.time)}
-                    </Text>
-                  </View>
-                  <View className="flex-row items-center gap-2">
-                    <Text
-                      style={{
-                        fontSize: 9,
-                        fontFamily: "Fraunces_700Bold",
-                        color: "#9CA3AF",
-                        letterSpacing: 1,
-                      }}>
-                      {dose.label}
-                    </Text>
-                    <Feather name="edit-2" size={11} color="#CBD5E1" />
-                    {doses.length > 1 && (
-                      <TouchableOpacity
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          removeDose(dose.id);
-                        }}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Feather name="x" size={13} color="#CBD5E1" />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
+            {/* Dose time rows */}
+            {doses.map((dose, idx) => (
+              <TouchableOpacity
+                key={dose.id}
+                onPress={() => {
+                  if (Platform.OS === "android") {
+                    // Android shows picker inline — just open it
+                    setTempTime(dose.time);
+                    setEditingDose(dose.id);
+                  } else {
+                    openTimePicker(dose);
+                  }
+                }}
+                className="flex-row items-center justify-between py-3 border-b border-gray-50">
+                <View className="flex-row items-center gap-3">
+                  <Feather
+                    name={idx === 0 ? "sun" : idx === 1 ? "moon" : "clock"}
+                    size={16}
+                    color="#9CA3AF"
+                  />
+                  <Text
+                    style={{
+                      fontFamily: "Fraunces_700Bold",
+                      color: "#1A0A2E",
+                      fontSize: 18,
+                    }}>
+                    {fmt(dose.time)}
+                  </Text>
+                </View>
+                <View className="flex-row items-center gap-3">
+                  <Text
+                    style={{
+                      fontFamily: "Fraunces_400Regular",
+                      color: "#9CA3AF",
+                      fontSize: 12,
+                    }}>
+                    {dose.label}
+                  </Text>
+                  {doses.length > 1 && (
+                    <TouchableOpacity onPress={() => removeDose(dose.id)}>
+                      <Feather name="x" size={14} color="#CBD5E1" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </TouchableOpacity>
+            ))}
 
             <TouchableOpacity
               onPress={addDose}
-              style={{
-                marginTop: 10,
-                borderWidth: 1,
-                borderStyle: "dashed",
-                borderColor: "#957DC2",
-                borderRadius: 12,
-                paddingVertical: 12,
-                alignItems: "center",
-                flexDirection: "row",
-                justifyContent: "center",
-                gap: 6,
-              }}>
-              <Feather name="plus" size={13} color="#957DC2" />
+              className="mt-3 border border-dashed border-[#957DC2] rounded-xl py-3 items-center flex-row justify-center gap-2">
+              <Feather name="plus" size={14} color="#957DC2" />
               <Text
                 style={{
+                  fontFamily: "Fraunces_700Bold",
                   fontSize: 13,
                   color: "#957DC2",
-                  fontFamily: "Fraunces_700Bold",
                 }}>
                 Add Another Dose
               </Text>
             </TouchableOpacity>
           </View>
 
-          {/* Date range */}
-          <View className="flex-row gap-2.5">
+          {/* ── Date range ── */}
+          <View className="flex-row gap-3">
             <TouchableOpacity
-              onPress={() => {
-                setTempStartDate(startDate);
-                setShowStartPicker(true);
-              }}
+              onPress={() => setShowStartPicker(true)}
               style={{
                 flex: 1,
                 backgroundColor: "#fff",
                 borderRadius: 16,
                 paddingHorizontal: 16,
-                paddingVertical: 12,
+                paddingTop: 12,
+                paddingBottom: 10,
               }}>
               <Text
                 style={{
@@ -424,21 +510,19 @@ export const EditMedicationScreen = ({
                   }}>
                   {fmtDate(startDate)}
                 </Text>
-                <Feather name="calendar" size={14} color="#957DC2" />
+                <Feather name="calendar" size={14} color="#9333EA" />
               </View>
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => {
-                setTempEndDate(endDate);
-                setShowEndPicker(true);
-              }}
+              onPress={() => setShowEndPicker(true)}
               style={{
                 flex: 1,
                 backgroundColor: "#fff",
                 borderRadius: 16,
                 paddingHorizontal: 16,
-                paddingVertical: 12,
+                paddingTop: 12,
+                paddingBottom: 10,
               }}>
               <Text
                 style={{
@@ -454,24 +538,24 @@ export const EditMedicationScreen = ({
                 <Text
                   style={{
                     fontSize: 15,
-                    color: "#1A0A2E",
+                    color: endDate ? "#1A0A2E" : "#CBD5E1",
                     fontFamily: "Fraunces_400Regular",
                   }}>
-                  {fmtDate(endDate)}
+                  {endDate ? fmtDate(endDate) : "mm/dd/yy"}
                 </Text>
-                <Feather name="calendar" size={14} color="#957DC2" />
+                <Feather name="calendar" size={14} color="#9333EA" />
               </View>
             </TouchableOpacity>
           </View>
 
-          {/* Notes */}
+          {/* ── Notes ── */}
           <View
             style={{
               backgroundColor: "#fff",
               borderRadius: 16,
               paddingHorizontal: 16,
               paddingTop: 12,
-              paddingBottom: 12,
+              paddingBottom: 10,
             }}>
             <Text
               style={{
@@ -486,40 +570,46 @@ export const EditMedicationScreen = ({
             <TextInput
               value={notes}
               onChangeText={setNotes}
-              placeholder="e.g. Take after breakfast with a full glass of water..."
-              placeholderTextColor="#CBD5E1"
               multiline
               numberOfLines={3}
+              placeholder="Optional notes..."
+              placeholderTextColor="#CBD5E1"
               style={{
-                fontSize: 13,
+                fontSize: 14,
                 color: "#1A0A2E",
                 fontFamily: "Fraunces_400Regular",
                 textAlignVertical: "top",
-                minHeight: 72,
-                lineHeight: 20,
+                minHeight: 64,
               }}
             />
           </View>
 
-          {/* Footer */}
-          <View style={{ paddingTop: 8, paddingBottom: 16, gap: 10 }}>
+          {/* ── Footer buttons ── */}
+          <View style={{ gap: 10, paddingTop: 4 }}>
             <TouchableOpacity
-              onPress={() => onSave?.({ ...med, name: medName, dosage, notes })}
+              onPress={handleSave}
+              disabled={saving}
               style={{
                 backgroundColor: "#9333EA",
-                borderRadius: 30,
+                borderRadius: 999,
                 paddingVertical: 16,
                 alignItems: "center",
+                justifyContent: "center",
+                opacity: saving ? 0.6 : 1,
               }}>
-              <Text
-                style={{
-                  color: "#fff",
-                  fontSize: 15,
-                  fontFamily: "Fraunces_700Bold",
-                  letterSpacing: 0.5,
-                }}>
-                Save Changes
-              </Text>
+              {saving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text
+                  style={{
+                    color: "#fff",
+                    fontFamily: "Fraunces_700Bold",
+                    fontSize: 15,
+                    letterSpacing: 0.5,
+                  }}>
+                  Save Changes
+                </Text>
+              )}
             </TouchableOpacity>
             <TouchableOpacity onPress={onBack} style={{ alignItems: "center" }}>
               <Text
@@ -535,7 +625,7 @@ export const EditMedicationScreen = ({
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* ── Time picker ── */}
+      {/* ── Time picker modal ── */}
       <Modal
         visible={editingDose !== null}
         transparent

@@ -1,9 +1,12 @@
+// components/profile/ProfileDetails.tsx
+import { useProfile } from "@/lib/hooks/useProfile";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
 import { format } from "date-fns";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
@@ -22,27 +25,36 @@ import Reanimated, {
 } from "react-native-reanimated";
 
 type Gender = "Female" | "Male" | "Other";
+const GENDERS: Gender[] = ["Female", "Male", "Other"];
+const PURPLE = "#7C3AED";
+const PURPLE_LIGHT = "#EDE9FE";
+const INPUT_BG = "#F5F3FF";
 
 interface Props {
   onBack: () => void;
 }
 
-const GENDERS: Gender[] = ["Female", "Male", "Other"];
-
-// Darker purple to match screenshot
-const PURPLE = "#7C3AED";
-const PURPLE_LIGHT = "#EDE9FE"; // lavender bg for gender card
-const INPUT_BG = "#F5F3FF"; // very subtle purple tint on inputs
-
 export const ProfileDetails = ({ onBack }: Props) => {
-  const [image, setImage] = useState<string | null>(null);
-  const [fullName, setFullName] = useState("Chioma Adeyemi");
-  const [email, setEmail] = useState("chioma.a@example.com");
-  const [phone, setPhone] = useState("+234 802 345 6789");
+  const { user, saving, updateProfile, uploadAvatar } = useProfile();
+
+  // Local form state — seeded from API user once loaded
+  const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("");
   const [gender, setGender] = useState<Gender>("Female");
-  const [dob, setDob] = useState<Date>(new Date("1994-05-12"));
+  const [dob, setDob] = useState<Date>(new Date("1990-01-01"));
+  const [tempDob, setTempDob] = useState<Date>(dob);
   const [showDobPicker, setShowDobPicker] = useState(false);
-  const [tempDob, setTempDob] = useState<Date>(new Date("1994-05-12"));
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  // Seed form fields once user data arrives
+  useEffect(() => {
+    if (user) {
+      setFullName(user.fullName ?? "");
+      setPhone(user.phoneNumber ?? "");
+      setGender((user.gender as Gender) ?? "Female");
+      if (user.dateOfBirth) setDob(new Date(user.dateOfBirth));
+    }
+  }, [user]);
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -57,9 +69,37 @@ export const ProfileDetails = ({ onBack }: Props) => {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 1,
+      quality: 0.8,
     });
-    if (!result.canceled) setImage(result.assets[0].uri);
+    if (!result.canceled) {
+      try {
+        setUploadingAvatar(true);
+        await uploadAvatar(result.assets[0].uri);
+      } catch (err: any) {
+        Alert.alert("Upload failed", err.message);
+      } finally {
+        setUploadingAvatar(false);
+      }
+    }
+  };
+
+  const handleSave = async () => {
+    if (!fullName.trim()) {
+      Alert.alert("Missing", "Please enter your full name.");
+      return;
+    }
+    try {
+      await updateProfile({
+        fullName: fullName.trim(),
+        phoneNumber: phone.trim() || undefined,
+        gender,
+        dateOfBirth: dob.toISOString(),
+      });
+      Alert.alert("Saved ✓", "Your profile has been updated.");
+      onBack();
+    } catch (err: any) {
+      Alert.alert("Error", err.message ?? "Could not save profile.");
+    }
   };
 
   return (
@@ -70,7 +110,7 @@ export const ProfileDetails = ({ onBack }: Props) => {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        {/* ── Header ── */}
+        {/* Header */}
         <View
           style={{
             flexDirection: "row",
@@ -102,7 +142,7 @@ export const ProfileDetails = ({ onBack }: Props) => {
           }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled">
-          {/* ── Avatar ── */}
+          {/* Avatar */}
           <View
             style={{
               alignItems: "center",
@@ -110,21 +150,38 @@ export const ProfileDetails = ({ onBack }: Props) => {
               paddingBottom: 24,
               gap: 12,
             }}>
-            <TouchableOpacity onPress={pickImage} activeOpacity={0.85}>
-              <Image
-                source={
-                  image
-                    ? { uri: image }
-                    : require("@/assets/images/faceCard.jpg")
-                }
-                style={{
-                  width: 110,
-                  height: 110,
-                  borderRadius: 55,
-                  borderWidth: 3,
-                  borderColor: PURPLE,
-                }}
-              />
+            <TouchableOpacity
+              onPress={pickImage}
+              activeOpacity={0.85}
+              disabled={uploadingAvatar}>
+              {uploadingAvatar ? (
+                <View
+                  style={{
+                    width: 110,
+                    height: 110,
+                    borderRadius: 55,
+                    backgroundColor: PURPLE_LIGHT,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}>
+                  <ActivityIndicator color={PURPLE} />
+                </View>
+              ) : (
+                <Image
+                  source={
+                    user?.profileImage
+                      ? { uri: user.profileImage }
+                      : require("@/assets/images/faceCard.jpg")
+                  }
+                  style={{
+                    width: 110,
+                    height: 110,
+                    borderRadius: 55,
+                    borderWidth: 3,
+                    borderColor: PURPLE,
+                  }}
+                />
+              )}
               <View
                 style={{
                   position: "absolute",
@@ -141,6 +198,7 @@ export const ProfileDetails = ({ onBack }: Props) => {
                 <Feather name="edit-2" size={14} color="#fff" />
               </View>
             </TouchableOpacity>
+
             <View style={{ alignItems: "center", gap: 2 }}>
               <Text
                 style={{
@@ -157,12 +215,12 @@ export const ProfileDetails = ({ onBack }: Props) => {
                   fontFamily: "Fraunces_700Bold",
                   color: "#1A0A2E",
                 }}>
-                {fullName}
+                {user?.fullName ?? fullName}
               </Text>
             </View>
           </View>
 
-          {/* ── Full Name ── */}
+          {/* Full Name */}
           <View
             style={{
               backgroundColor: INPUT_BG,
@@ -193,10 +251,10 @@ export const ProfileDetails = ({ onBack }: Props) => {
             />
           </View>
 
-          {/* ── Email ── */}
+          {/* Email — read only */}
           <View
             style={{
-              backgroundColor: INPUT_BG,
+              backgroundColor: "#F9FAFB",
               borderRadius: 16,
               paddingHorizontal: 16,
               paddingTop: 12,
@@ -212,21 +270,26 @@ export const ProfileDetails = ({ onBack }: Props) => {
               }}>
               EMAIL ADDRESS
             </Text>
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              returnKeyType="next"
+            <Text
               style={{
                 fontSize: 16,
                 fontFamily: "Fraunces_400Regular",
-                color: "#1A0A2E",
-              }}
-            />
+                color: "#9CA3AF",
+              }}>
+              {user?.email ?? ""}
+            </Text>
+            <Text
+              style={{
+                fontSize: 10,
+                color: "#CBD5E1",
+                fontFamily: "Fraunces_400Regular",
+                marginTop: 2,
+              }}>
+              Email cannot be changed
+            </Text>
           </View>
 
-          {/* ── Phone ── */}
+          {/* Phone */}
           <View
             style={{
               backgroundColor: INPUT_BG,
@@ -258,7 +321,7 @@ export const ProfileDetails = ({ onBack }: Props) => {
             />
           </View>
 
-          {/* ── Gender — lavender bg, white pill for active ── */}
+          {/* Gender */}
           <View
             style={{
               backgroundColor: PURPLE_LIGHT,
@@ -290,7 +353,6 @@ export const ProfileDetails = ({ onBack }: Props) => {
                       borderRadius: 999,
                       alignItems: "center",
                       backgroundColor: isActive ? "#fff" : "transparent",
-                      // Shadow only on active pill so it "pops"
                       shadowColor: isActive ? PURPLE : "transparent",
                       shadowOpacity: isActive ? 0.15 : 0,
                       shadowRadius: isActive ? 8 : 0,
@@ -313,7 +375,7 @@ export const ProfileDetails = ({ onBack }: Props) => {
             </View>
           </View>
 
-          {/* ── Date of Birth ── */}
+          {/* Date of Birth */}
           <TouchableOpacity
             onPress={() => {
               setTempDob(dob);
@@ -353,49 +415,48 @@ export const ProfileDetails = ({ onBack }: Props) => {
               <Feather name="calendar" size={18} color={PURPLE} />
             </View>
           </TouchableOpacity>
-        </ScrollView>
 
-        {/* ── Save button ── */}
-        <View
-          style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            paddingHorizontal: 20,
-            paddingBottom: 40,
-            paddingTop: 16,
-            backgroundColor: "#fff",
-          }}>
-          <TouchableOpacity
-            style={{
-              backgroundColor: PURPLE,
-              borderRadius: 999,
-              paddingVertical: 16,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-            }}>
-            <MaterialCommunityIcons
-              name="content-save-outline"
-              size={18}
-              color="#fff"
-            />
-            <Text
+          {/* Save button */}
+          <View style={{ paddingTop: 4, paddingBottom: 40 }}>
+            <TouchableOpacity
+              onPress={handleSave}
+              disabled={saving}
               style={{
-                color: "#fff",
-                fontSize: 15,
-                fontFamily: "Fraunces_700Bold",
-                letterSpacing: 0.5,
+                backgroundColor: PURPLE,
+                borderRadius: 999,
+                paddingVertical: 16,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                opacity: saving ? 0.6 : 1,
               }}>
-              Save Changes
-            </Text>
-          </TouchableOpacity>
-        </View>
+              {saving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <MaterialCommunityIcons
+                    name="content-save-outline"
+                    size={18}
+                    color="#fff"
+                  />
+                  <Text
+                    style={{
+                      color: "#fff",
+                      fontSize: 15,
+                      fontFamily: "Fraunces_700Bold",
+                      letterSpacing: 0.5,
+                    }}>
+                    Save Changes
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* ── DOB picker modal ── */}
+      {/* DOB picker modal */}
       <Modal
         visible={showDobPicker}
         transparent

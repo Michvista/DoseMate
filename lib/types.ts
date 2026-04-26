@@ -1,15 +1,33 @@
+// export type Medication = {
+//   id: string;
+//   name: string;
+//   dosage: string;
+//   unit: string;
+//   frequency: string;
+//   nextDose: string;
+//   color: string;
+//   status: "active" | "paused" | "completed";
+//   icon?: string;
+//   category?: string;
+//   notes?: string;
+// };
 export type Medication = {
-  id: string;
+  _id: string;
+  userId: string;
   name: string;
-  dosage: string;
-  unit: string;
-  frequency: string;
-  nextDose: string;
-  color: string;
-  status: "active" | "paused" | "completed";
-  icon?: string;
-  category?: string;
+  type: string;
+  dosage: {
+    value: number;
+    unit: string;
+  };
+  scheduleType: "Once Daily" | "Morning & Evening" | "Three Times";
+  times: string[]; // e.g. ["08:00", "20:00"]
+  startDate: string; // ISO date string
+  endDate?: string;
   notes?: string;
+  status: "Active" | "Inactive";
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type HistoryEntry = {

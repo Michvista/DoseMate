@@ -1,7 +1,11 @@
+// app/(tabs)/profile.tsx
+import { ProfileDetails } from "@/components/profile/ProfileDetails";
+import { useProfile } from "@/lib/hooks/useProfile";
 import { Entypo, Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Image,
   ScrollView,
@@ -11,51 +15,61 @@ import {
   View,
 } from "react-native";
 import Reanimated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { ProfileDetails } from "@/components/profile/ProfileDetails";
-
-interface NotificationSettings {
-  highPriority: boolean;
-  dailyReminders: boolean;
-  marketing: boolean;
-}
 
 const Page = () => {
-  const [image, setImage] = useState<string | null>(null);
+  const { user, loading, uploadAvatar, updateSettings } = useProfile();
   const [showDetails, setShowDetails] = useState(false);
-  const [settings, setSettings] = useState<NotificationSettings>({
-    highPriority: false,
-    dailyReminders: true,
-    marketing: false,
-  });
-
-  const toggleSetting = (key: keyof NotificationSettings) => {
-    setSettings((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert(
-        "Permission Denied",
-        "We need access to your photos to change your avatar.",
-      );
+      Alert.alert("Permission Denied", "We need access to your photos.");
       return;
     }
+
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 1,
+      quality: 0.8,
     });
-    if (!result.canceled) setImage(result.assets[0].uri);
+
+    if (!result.canceled) {
+      try {
+        setUploadingAvatar(true);
+        await uploadAvatar(result.assets[0].uri);
+      } catch (err: any) {
+        Alert.alert("Upload failed", err.message);
+      } finally {
+        setUploadingAvatar(false);
+      }
+    }
   };
 
-  // ── Profile Details screen slides over the profile page ──────
+  const handleToggle = async (
+    key: "highPriorityAlarms" | "dailyReminders",
+    value: boolean,
+  ) => {
+    try {
+      await updateSettings({ [key]: value });
+    } catch (err: any) {
+      Alert.alert("Error", err.message);
+    }
+  };
+
   if (showDetails) {
     return <ProfileDetails onBack={() => setShowDetails(false)} />;
   }
 
-  // ── Main profile page ─────────────────────────────────────────
+  if (loading) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+        <ActivityIndicator color="#9333EA" />
+      </View>
+    );
+  }
+
   return (
     <Reanimated.View
       entering={FadeIn.duration(200)}
@@ -80,22 +94,37 @@ const Page = () => {
             <TouchableOpacity
               onPress={pickImage}
               activeOpacity={0.8}
+              disabled={uploadingAvatar}
               className="relative">
-              <Image
-                source={
-                  image
-                    ? { uri: image }
-                    : require("@/assets/images/faceCard.jpg")
-                }
-                style={{
-                  width: 140,
-                  height: 140,
-                  borderRadius: 70,
-                  borderColor: "#8B5CF6",
-                  borderWidth: 2,
-                  backgroundColor: "#eee",
-                }}
-              />
+              {uploadingAvatar ? (
+                <View
+                  style={{
+                    width: 140,
+                    height: 140,
+                    borderRadius: 70,
+                    backgroundColor: "#EDE9FE",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}>
+                  <ActivityIndicator color="#9333EA" />
+                </View>
+              ) : (
+                <Image
+                  source={
+                    user?.profileImage
+                      ? { uri: user.profileImage }
+                      : require("@/assets/images/faceCard.jpg")
+                  }
+                  style={{
+                    width: 140,
+                    height: 140,
+                    borderRadius: 70,
+                    borderColor: "#8B5CF6",
+                    borderWidth: 2,
+                    backgroundColor: "#eee",
+                  }}
+                />
+              )}
               <View
                 className="absolute"
                 style={{
@@ -105,28 +134,25 @@ const Page = () => {
                   borderRadius: 20,
                   padding: 8,
                   elevation: 5,
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.2,
                 }}>
                 <Feather name="edit-2" size={18} color="#fff" />
               </View>
             </TouchableOpacity>
+
             <View className="text-center items-center gap-2">
               <Text
                 className="text-2xl"
                 style={{ fontFamily: "Fraunces_700Bold" }}>
-                Chioma Adeyemi
+                {user?.fullName ?? "Guest User"}
               </Text>
               <Text
                 className="text-gray-700"
                 style={{ fontFamily: "Fraunces_400Regular" }}>
-                chioma@gmail.com
+                {user?.email ?? ""}
               </Text>
             </View>
           </View>
 
-          {/* Profile Details row — tapping opens the detail screen */}
           <TouchableOpacity onPress={() => setShowDetails(true)}>
             <View className="flex items-center justify-center">
               <View className="mb-12 w-[90%] flex flex-col items-center justify-center bg-lighter p-4 rounded-full">
@@ -194,9 +220,11 @@ const Page = () => {
             </View>
             <Switch
               trackColor={{ false: "#767577", true: "#8B5CF6" }}
-              thumbColor={settings.highPriority ? "#fff" : "#f4f3f4"}
-              onValueChange={() => toggleSetting("highPriority")}
-              value={settings.highPriority}
+              thumbColor={
+                user?.settings.highPriorityAlarms ? "#fff" : "#f4f3f4"
+              }
+              onValueChange={(v) => handleToggle("highPriorityAlarms", v)}
+              value={user?.settings.highPriorityAlarms ?? false}
             />
           </View>
 
@@ -225,9 +253,9 @@ const Page = () => {
             </View>
             <Switch
               trackColor={{ false: "#767577", true: "#8B5CF6" }}
-              thumbColor={settings.dailyReminders ? "#fff" : "#f4f3f4"}
-              onValueChange={() => toggleSetting("dailyReminders")}
-              value={settings.dailyReminders}
+              thumbColor={user?.settings.dailyReminders ? "#fff" : "#f4f3f4"}
+              onValueChange={(v) => handleToggle("dailyReminders", v)}
+              value={user?.settings.dailyReminders ?? true}
             />
           </View>
         </View>

@@ -1,4 +1,4 @@
-﻿import { Feather, MaterialIcons } from "@expo/vector-icons";
+import { Feather, MaterialIcons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { JSX, useState } from "react";
 import {
@@ -11,9 +11,15 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback, // backdrop tap to close — doesn't consume child events
   View,
+  ActivityIndicator,
+  Alert,
 } from "react-native";
+import { useRouter } from "expo-router";
+import { useMedications } from "../../lib/hooks/useMedications";
 
 import { MedicationIcons } from "../../lib/MedicationIcons";
+
+import * as Notifications from "expo-notifications";
 
 // ── Types ─────────────────────────────────────────────────────
 type FormFactor = "pill" | "capsule" | "liquid" | "injection" | "patch";
@@ -72,10 +78,11 @@ const makeTime = (h: number, m = 0) => {
 };
 
 // Schedule presets — each preset defines how many dose rows to show by default
-const SCHEDULE_PRESETS: { label: string; times: Omit<DoseTime, "id">[] }[] = [
-  { label: "ONCE DAILY", times: [{ time: makeTime(8), label: "MORNING" }] },
+const SCHEDULE_PRESETS: { label: string; apiValue: string; times: Omit<DoseTime, "id">[] }[] = [
+  { label: "ONCE DAILY", apiValue: "Once Daily", times: [{ time: makeTime(8), label: "MORNING" }] },
   {
     label: "MORNING & EVENING",
+    apiValue: "Morning & Evening",
     times: [
       { time: makeTime(8), label: "MORNING" },
       { time: makeTime(20), label: "EVENING" },
@@ -83,6 +90,7 @@ const SCHEDULE_PRESETS: { label: string; times: Omit<DoseTime, "id">[] }[] = [
   },
   {
     label: "THREE TIMES",
+    apiValue: "Three Times",
     times: [
       { time: makeTime(8), label: "MORNING" },
       { time: makeTime(14), label: "AFTERNOON" },
@@ -222,6 +230,10 @@ const Page = () => {
     string | null
   >(null);
 
+  const { addMedication } = useMedications();
+  const [saving, setSaving] = useState(false);
+  const router = useRouter();
+
   // Look up the full form factor object for the current selection
   const selectedForm = FORM_FACTORS.find((f) => f.value === formFactor)!;
 
@@ -274,6 +286,75 @@ const Page = () => {
     );
     setEditingDose(null); // close modal
   };
+
+const handleSave = async () => {
+  if (!medName.trim())
+    return Alert.alert("Missing", "Enter a medication name.");
+  if (!dosage || isNaN(parseFloat(dosage)))
+    return Alert.alert("Missing", "Enter dosage.");
+  if (doses.length === 0)
+    return Alert.alert("Missing", "Add at least one time.");
+
+  try {
+    setSaving(true);
+
+    // 1. Save Medication to Backend
+    const newMed = await addMedication({
+      name: medName.trim(),
+      type: selectedForm.value,
+      dosage: {
+        value: parseFloat(dosage),
+        unit: selectedForm.unit,
+      },
+      scheduleType: "Once Daily", // Ensure this matches your APIMedication type
+      times: doses.map((d) =>
+        d.time.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }),
+      ),
+      startDate: startDate?.toISOString() || new Date().toISOString(),
+      endDate: endDate?.toISOString(),
+      status: "Active",
+    });
+
+    // 2. Schedule Local Notifications
+    for (const dose of doses) {
+      const hours = dose.time.getHours();
+      const minutes = dose.time.getMinutes();
+
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Medication Reminder",
+          body: `Time for your ${dosage}${selectedForm.unit} of ${medName}`,
+          data: {
+            screen: "Alarm",
+            medicationName: medName,
+            dosageValue: dosage,
+            dosageUnit: selectedForm.unit,
+            scheduledTime: dose.time.toISOString(),
+            medicationId: newMed?._id, // Backend _id
+          },
+          categoryIdentifier: "DOSE_REMINDER",
+        },
+        trigger: {
+          // USE THIS TYPE SPECIFICALLY
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
+          hour: hours,
+          minute: minutes,
+          channelId: "dose-alarms",
+        } as Notifications.DailyTriggerInput,
+      });
+    }
+
+    router.back();
+  } catch (err: any) {
+    Alert.alert("Error", err.message);
+  } finally {
+    setSaving(false);
+  }
+};
 
   return (
     // KeyboardAvoidingView pushes content above the keyboard on iOS
@@ -568,18 +649,24 @@ const Page = () => {
             />
           </View>
         </View>
-      </ScrollView>
-
       {/* ── Sticky footer ── */}
-      <View className="absolute bottom-0 left-0 right-0 px-4 pb-10 pt-4 bg-add-bg">
-        <TouchableOpacity className="bg-tabs-100 rounded-full py-4 items-center mb-3">
-          <Text
-            className="text-white text-base font-bold tracking-wide"
-            style={{ fontFamily: "Fraunces_700Bold" }}>
-            Save Medication
-          </Text>
+      <View className=" px-4 pb-10 pt-4 bg-add-bg">
+        <TouchableOpacity 
+          onPress={handleSave}
+          disabled={saving}
+          className="bg-tabs-100 rounded-full py-4 items-center mb-3 flex-row justify-center"
+          style={{ opacity: saving ? 0.6 : 1 }}>
+          {saving ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text
+              className="text-white text-base font-bold tracking-wide"
+              style={{ fontFamily: "Fraunces_700Bold" }}>
+              Save Medication
+            </Text>
+          )}
         </TouchableOpacity>
-        <TouchableOpacity className="items-center">
+        <TouchableOpacity className="items-center" onPress={() => router.back()}>
           <Text
             className="text-gray-400 text-sm"
             style={{ fontFamily: "Fraunces_400Regular" }}>
@@ -587,6 +674,8 @@ const Page = () => {
           </Text>
         </TouchableOpacity>
       </View>
+      </ScrollView>
+
 
       {/* ── Time picker modal (iOS only) ── */}
       {Platform.OS === "ios" && (
@@ -713,3 +802,4 @@ const Page = () => {
 };
 
 export default Page;
+

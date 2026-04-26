@@ -1,6 +1,7 @@
 import { TabBar } from "@/components/TabBar";
 import { Tabs } from "expo-router";
 import { useState } from "react";
+import { GuestProvider } from "@/lib/context/GuestContext";
 
 
 import {
@@ -32,6 +33,7 @@ const TabLayout = () => {
       if (!fontsLoaded) return null;
 
   return (
+    <GuestProvider>
     <Tabs
     screenOptions={{
             headerShown: false,
@@ -43,6 +45,8 @@ const TabLayout = () => {
       <Tabs.Screen name="meds" options={{ title: "Meds" }} />
       <Tabs.Screen name="profile" options={{ title: "Profile" }} />
     </Tabs>
+    </GuestProvider>
+
   );
 };
 

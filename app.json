@@ -12,12 +12,20 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.michelle29.DoseMate",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
+      "permissions": [
+        "USE_FULL_SCREEN_INTENT",
+        "SCHEDULE_EXACT_ALARM",
+        "RECEIVE_BOOT_COMPLETED",
+        "SYSTEM_ALERT_WINDOW"
+      ],
+      "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
@@ -38,11 +46,24 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      ["expo-notifications", { "icon": "./assets/images/icon.png" }]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "95a24563-87c0-4a31-8a28-7c61804f85f1"
+      }
+    },
+    "owner": "michelle29",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/95a24563-87c0-4a31-8a28-7c61804f85f1"
     }
   }
 }

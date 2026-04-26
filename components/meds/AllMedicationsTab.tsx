@@ -1,51 +1,78 @@
+// components/meds/AllMedicationsTab.tsx
 import { MedicationIcons } from "@/lib/MedicationIcons";
+import { APIMedication } from "@/lib/api/types";
+import { useMedications } from "@/lib/hooks/useMedications";
 import { Feather } from "@expo/vector-icons";
 import { useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
   ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
-import { ACTIVE_MEDS } from "../../lib/data";
-import { CATEGORY_COLORS, Medication } from "../../lib/types";
 
-// Derive icon types from MedicationIcons keys
-const ICON_TYPES = [
-  "All",
-  "pill",
-  "capsule",
-  "syrup",
-  "injection",
-  "patch",
-];
+const TYPE_COLORS: Record<string, string> = {
+  pill: "#9333EA",
+  capsule: "#EF4444",
+  liquid: "#3B82F6",
+  injection: "#F59E0B",
+  patch: "#10B981",
+};
 
-interface AllMedicationsTabProps {
+const ICON_TYPES = ["All", "pill", "capsule", "liquid", "injection", "patch"];
+
+interface Props {
   onAddPress: () => void;
-  onEditPress: (med: Medication) => void;
+  onEditPress: (med: APIMedication) => void;
 }
 
-export const AllMedicationsTab = ({
-  onAddPress,
-  onEditPress,
-}: AllMedicationsTabProps) => {
+export const AllMedicationsTab = ({ onAddPress, onEditPress }: Props) => {
+  const { medications, loading, deleteMedication, toggleStatus } =
+    useMedications();
   const [searchQuery, setSearchQuery] = useState("");
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-  const [selectedIconFilter, setSelectedIconFilter] = useState("All");
+  const [selectedFilter, setSelectedFilter] = useState("All");
 
-  const filteredMeds = ACTIVE_MEDS.filter((med) => {
-    const matchesSearch =
+  const filtered = medications.filter((med) => {
+    const matchSearch =
       searchQuery === "" ||
       med.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      med.category?.toLowerCase().includes(searchQuery.toLowerCase());
-
-    const matchesIcon =
-      selectedIconFilter === "All" ||
-      (med.icon ?? "pill").toLowerCase() === selectedIconFilter.toLowerCase();
-
-    return matchesSearch && matchesIcon;
+      med.type.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchType = selectedFilter === "All" || med.type === selectedFilter;
+    return matchSearch && matchType;
   });
+
+  const handleDelete = (med: APIMedication) => {
+    Alert.alert("Delete Medication", `Remove ${med.name} permanently?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () =>
+          deleteMedication(med._id).catch((err) =>
+            Alert.alert("Error", err.message),
+          ),
+      },
+    ]);
+  };
+
+  const handleToggleStatus = (med: APIMedication) => {
+    const next = med.status === "Active" ? "Inactive" : "Active";
+    toggleStatus(med._id, next).catch((err) =>
+      Alert.alert("Error", err.message),
+    );
+  };
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+        <ActivityIndicator color="#9333EA" size="large" />
+      </View>
+    );
+  }
 
   return (
     <ScrollView
@@ -99,7 +126,6 @@ export const AllMedicationsTab = ({
               shadowOpacity: 0.15,
               shadowRadius: 16,
               elevation: 20,
-              zIndex:50
             }}>
             <View className="px-4 pt-3 pb-1">
               <Text
@@ -113,12 +139,12 @@ export const AllMedicationsTab = ({
               </Text>
             </View>
             {ICON_TYPES.map((type) => {
-              const isActive = selectedIconFilter === type;
+              const isActive = selectedFilter === type;
               return (
                 <TouchableOpacity
                   key={type}
                   onPress={() => {
-                    setSelectedIconFilter(type);
+                    setSelectedFilter(type);
                     setShowFilterDropdown(false);
                   }}
                   className="flex-row items-center gap-3 px-4 py-3"
@@ -166,7 +192,7 @@ export const AllMedicationsTab = ({
       </View>
 
       {/* Active filter chip */}
-      {selectedIconFilter !== "All" && (
+      {selectedFilter !== "All" && (
         <View className="flex-row items-center gap-2">
           <View
             className="flex-row items-center gap-2 px-3 py-1.5 rounded-full"
@@ -178,9 +204,9 @@ export const AllMedicationsTab = ({
                 color: "#9333EA",
                 textTransform: "capitalize",
               }}>
-              {selectedIconFilter}
+              {selectedFilter}
             </Text>
-            <TouchableOpacity onPress={() => setSelectedIconFilter("All")}>
+            <TouchableOpacity onPress={() => setSelectedFilter("All")}>
               <Feather name="x" size={11} color="#9333EA" />
             </TouchableOpacity>
           </View>
@@ -188,7 +214,7 @@ export const AllMedicationsTab = ({
       )}
 
       {/* Medication cards */}
-      {filteredMeds.length === 0 ? (
+      {filtered.length === 0 ? (
         <View className="items-center justify-center py-12">
           <Feather name="inbox" size={32} color="#C4B5FD" />
           <Text
@@ -198,11 +224,13 @@ export const AllMedicationsTab = ({
           </Text>
         </View>
       ) : (
-        filteredMeds.map((med) => {
-          const catColor = CATEGORY_COLORS[med.category ?? ""] ?? med.color;
+        filtered.map((med) => {
+          const color = TYPE_COLORS[med.type] ?? "#9333EA";
+          const Icon =
+            (MedicationIcons as any)[med.type] ?? (MedicationIcons as any).pill;
           return (
             <View
-              key={med.id}
+              key={med._id}
               style={{
                 backgroundColor: "#fff",
                 borderRadius: 20,
@@ -212,11 +240,11 @@ export const AllMedicationsTab = ({
                 shadowRadius: 10,
                 elevation: 2,
               }}>
-              {/* Top row: category + actions */}
+              {/* Top row: type badge + actions */}
               <View className="flex-row justify-between items-center mb-3">
                 <View
                   style={{
-                    backgroundColor: catColor + "15",
+                    backgroundColor: color + "15",
                     paddingHorizontal: 8,
                     paddingVertical: 3,
                     borderRadius: 8,
@@ -225,17 +253,37 @@ export const AllMedicationsTab = ({
                     style={{
                       fontSize: 9,
                       fontFamily: "Fraunces_700Bold",
-                      color: catColor,
+                      color,
                       letterSpacing: 1,
+                      textTransform: "uppercase",
                     }}>
-                    {med.category ?? "MEDICATION"}
+                    {med.type}
                   </Text>
                 </View>
-                <View className="flex-row gap-3">
+                <View className="flex-row gap-3 items-center">
+                  {/* Status toggle */}
+                  <TouchableOpacity
+                    onPress={() => handleToggleStatus(med)}
+                    style={{
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      borderRadius: 20,
+                      backgroundColor:
+                        med.status === "Active" ? "#D1FAE5" : "#F3F4F6",
+                    }}>
+                    <Text
+                      style={{
+                        fontSize: 9,
+                        fontFamily: "Fraunces_700Bold",
+                        color: med.status === "Active" ? "#10B981" : "#9CA3AF",
+                      }}>
+                      {med.status.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
                   <TouchableOpacity onPress={() => onEditPress(med)}>
                     <Feather name="edit-2" size={14} color="#9333EA" />
                   </TouchableOpacity>
-                  <TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDelete(med)}>
                     <Feather name="trash-2" size={14} color="#EF4444" />
                   </TouchableOpacity>
                 </View>
@@ -248,16 +296,11 @@ export const AllMedicationsTab = ({
                     width: 48,
                     height: 48,
                     borderRadius: 14,
-                    backgroundColor: catColor + "15",
+                    backgroundColor: color + "15",
                     alignItems: "center",
                     justifyContent: "center",
                   }}>
-                  {(() => {
-                    const Icon =
-                      (MedicationIcons as any)[med.icon || "pill"] ??
-                      (MedicationIcons as any).pill;
-                    return <Icon size={22} color={catColor} />;
-                  })()}
+                  <Icon size={22} color={color} />
                 </View>
                 <View>
                   <Text
@@ -276,15 +319,15 @@ export const AllMedicationsTab = ({
                         color: "#9CA3AF",
                         fontFamily: "Fraunces_400Regular",
                       }}>
-                      {med.dosage}
-                      {med.unit} · {med.frequency}
+                      {med.dosage.value}
+                      {med.dosage.unit} · {med.scheduleType}
                     </Text>
                   </View>
                 </View>
               </View>
 
-              {/* Next dose row */}
-              <View className="flex-row items-center gap-1.5">
+              {/* Times row */}
+              <View className="flex-row items-center gap-1.5 flex-wrap">
                 <Feather name="clock" size={12} color="#9CA3AF" />
                 <Text
                   style={{
@@ -292,7 +335,7 @@ export const AllMedicationsTab = ({
                     color: "#9CA3AF",
                     fontFamily: "Fraunces_400Regular",
                   }}>
-                  Next: {med.nextDose}
+                  {med.times.join("  ·  ")}
                 </Text>
               </View>
             </View>
@@ -343,7 +386,7 @@ export const AllMedicationsTab = ({
         </Text>
       </TouchableOpacity>
 
-      {/* Summary row */}
+      {/* Live summary row */}
       <View
         style={{
           backgroundColor: "#fff",
@@ -358,9 +401,22 @@ export const AllMedicationsTab = ({
           elevation: 2,
         }}>
         {[
-          { label: "TOTAL ACTIVE", value: "04" },
-          { label: "DUE TODAY", value: "07" },
-          { label: "ADHERENCE", value: "94%" },
+          {
+            label: "TOTAL ACTIVE",
+            value: String(
+              medications.filter((m) => m.status === "Active").length,
+            ).padStart(2, "0"),
+          },
+          {
+            label: "DOSE TIMES",
+            value: String(
+              medications.reduce((a, m) => a + m.times.length, 0),
+            ).padStart(2, "0"),
+          },
+          {
+            label: "TOTAL MEDS",
+            value: String(medications.length).padStart(2, "0"),
+          },
         ].map((item) => (
           <View key={item.label} style={{ alignItems: "center" }}>
             <Text

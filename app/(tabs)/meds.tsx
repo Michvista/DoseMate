@@ -1,9 +1,10 @@
+// app/(tabs)/meds.tsx
 import { ActiveMedsTab } from "@/components/meds/ActiveMedsTab";
 import { AllMedicationsTab } from "@/components/meds/AllMedicationsTab";
 import { DoseHistoryTab } from "@/components/meds/DoseHistoryTab";
 import { EditMedicationScreen } from "@/components/meds/EditMedicationScreen";
 import { MedsTabBar } from "@/components/meds/MedsTabBar";
-import { Medication } from "@/lib/types";
+import { APIMedication } from "@/lib/api/types";
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState } from "react";
@@ -20,16 +21,16 @@ const TABS = ["All Medications", "Dose History"];
 const Page = () => {
   const [view, setView] = useState<"home" | "tabs">("home");
   const [activeTab, setActiveTab] = useState(0);
-  const [editingMed, setEditingMed] = useState<Medication | null>(null);
+  const [editingMed, setEditingMed] = useState<APIMedication | null>(null);
 
   const handleAdd = () => router.push("/(tabs)/add");
-  const handleEdit = (med: Medication) => setEditingMed(med);
+  const handleEdit = (med: APIMedication) => setEditingMed(med);
   const handleBack = () => {
     setEditingMed(null);
     setView("tabs");
   };
 
-  // ── Full-screen edit view — slides in from the right ─────────
+  // Full-screen edit view slides in from the right
   if (editingMed) {
     return (
       <Reanimated.View
@@ -40,7 +41,7 @@ const Page = () => {
           med={editingMed}
           onBack={handleBack}
           onSave={(updated) => {
-            console.log("Saved:", updated);
+            console.log("Saved:", updated.name);
             handleBack();
           }}
         />
@@ -54,7 +55,7 @@ const Page = () => {
       exiting={FadeOut.duration(180)}
       style={{ flex: 1 }}
       className="bg-[#F8F6FF] pt-14">
-      {/* ── Header ── */}
+      {/* Header */}
       <View className="px-4 pb-3 flex-row items-center justify-between">
         <View className="flex-row items-center gap-3">
           {view === "tabs" && (
@@ -84,7 +85,7 @@ const Page = () => {
         </TouchableOpacity>
       </View>
 
-      {/* ── Content ── */}
+      {/* Content */}
       {view === "home" ? (
         <ActiveMedsTab
           onViewAllPress={() => {
