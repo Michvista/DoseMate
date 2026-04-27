@@ -27,15 +27,22 @@ router.get("/", async (req: AuthRequest, res: Response) => {
       filter.scheduledTime = { $gte: day, $lt: next };
     }
 
-    // Date-range filter (used by CalendarCard)
+    // Date-range filter (used by CalendarCard and useDoseLogs)
     if (req.query.dateFrom || req.query.dateTo) {
       filter.scheduledTime = {};
       if (req.query.dateFrom)
         filter.scheduledTime.$gte = new Date(req.query.dateFrom as string);
       if (req.query.dateTo) {
-        const end = new Date(req.query.dateTo as string);
-        end.setDate(end.getDate() + 1); // inclusive end
-        filter.scheduledTime.$lt = end;
+        const endStr = req.query.dateTo as string;
+        const end = new Date(endStr);
+        // If the date string was just YYYY-MM-DD (length 10), make it inclusive by adding a day
+        if (endStr.length <= 10) {
+          end.setDate(end.getDate() + 1);
+          filter.scheduledTime.$lt = end;
+        } else {
+          // If it's a full ISO string, use it as a strict upper bound
+          filter.scheduledTime.$lte = end;
+        }
       }
     }
 

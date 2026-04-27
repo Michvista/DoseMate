@@ -20,6 +20,7 @@ import { useMedications } from "../../lib/hooks/useMedications";
 import { MedicationIcons } from "../../lib/MedicationIcons";
 
 import * as Notifications from "expo-notifications";
+import { scheduleDoseReminder } from "@/lib/notifications/scheduler";
 
 // ── Types ─────────────────────────────────────────────────────
 type FormFactor = "pill" | "capsule" | "liquid" | "injection" | "patch";
@@ -319,32 +320,16 @@ const handleSave = async () => {
       status: "Active",
     });
 
-    // 2. Schedule Local Notifications
+    // 2. Schedule Local Notifications (using Notifee)
     for (const dose of doses) {
-      const hours = dose.time.getHours();
-      const minutes = dose.time.getMinutes();
-
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: "Medication Reminder",
-          body: `Time for your ${dosage}${selectedForm.unit} of ${medName}`,
-          data: {
-            screen: "Alarm",
-            medicationName: medName,
-            dosageValue: dosage,
-            dosageUnit: selectedForm.unit,
-            scheduledTime: dose.time.toISOString(),
-            medicationId: newMed?._id, // Backend _id
-          },
-          categoryIdentifier: "DOSE_REMINDER",
-        },
-        trigger: {
-          // USE THIS TYPE SPECIFICALLY
-          type: Notifications.SchedulableTriggerInputTypes.DAILY,
-          hour: hours,
-          minute: minutes,
-          channelId: "dose-alarms",
-        } as Notifications.DailyTriggerInput,
+      await scheduleDoseReminder({
+        medicationId: String(newMed?._id || ""),
+        doseLogId: "", // Future logs don't have IDs yet
+        medicationName: medName,
+        dosageValue: parseFloat(dosage),
+        dosageUnit: selectedForm.unit,
+        scheduleType: "Once Daily",
+        scheduledTime: dose.time,
       });
     }
 

@@ -45,15 +45,34 @@ export default function AlarmScreen() {
   // --- ACTIONS ---
 
   const handleTaken = async () => {
-    if (!logId) return Alert.alert("Error", "No log ID found.");
+    let activeLogId = logId;
+
+    // If no logId was passed (common for recurring notifications), try to find today's log
+    if (!activeLogId && params.medicationId && guestId) {
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const logs = await api.get<any[]>(`/dose-logs?date=${today}&medicationId=${params.medicationId}`, guestId);
+        if (logs.length > 0) {
+          activeLogId = logs[0]._id;
+        }
+      } catch (e) {
+        console.error("Failed to find log for medication:", e);
+      }
+    }
+
+    if (!activeLogId) return Alert.alert("Error", "Could not find a dose record to update. Please mark it manually in the app.");
+    if (!guestId) return Alert.alert("Error", "User session not found.");
     if (!guestId) return Alert.alert("Error", "User session not found."); // Ensure guestId exists
 
     setLoading(true);
     try {
-      await api.patch(`/dose-logs/${logId}`, { status: "TAKEN" }, guestId);
-      await notifee?.cancelNotification(`dose-${logId}`);
-      setDone("taken");
-      setTimeout(() => router.dismiss(), 1500);
+      // TypeScript fix: explicitly check guestId is not null
+      if (guestId && activeLogId) {
+        await api.patch(`/dose-logs/${activeLogId}`, { status: "TAKEN" }, guestId);
+        await notifee?.cancelNotification(`dose-${activeLogId}`);
+        setDone("taken");
+        setTimeout(() => router.dismiss(), 1500);
+      }
     } catch (err) {
       Alert.alert("Error", "Failed to mark as taken");
     } finally {
@@ -61,44 +80,50 @@ export default function AlarmScreen() {
     }
   };
 
-const handleSkip = async () => {
-  // 1. Guard check for logId and guestId
-  if (!logId) {
-    return Alert.alert("Error", "No log ID found for this dose.");
-  }
+  const handleSkip = async () => {
+    Alert.alert("Skip Dose?", "Are you sure you want to skip this dose?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Skip",
+        onPress: async () => {
+          let activeLogId = logId;
+          if (!activeLogId && params.medicationId && guestId) {
+            try {
+              const today = new Date().toISOString().split('T')[0];
+              const logs = await api.get<any[]>(`/dose-logs?date=${today}&medicationId=${params.medicationId}`, guestId);
+              if (logs.length > 0) activeLogId = logs[0]._id;
+            } catch (e) {
+              console.error("Failed to find log for medication:", e);
+            }
+          }
 
-  if (!guestId) {
-    return Alert.alert(
-      "Error",
-      "You must be logged in to perform this action.",
-    );
-  }
+          if (!activeLogId) {
+            Alert.alert("Notice", "Record not found, but we'll dismiss the alarm.");
+            router.dismiss();
+            return;
+          }
 
-  Alert.alert("Skip Dose?", "Are you sure you want to skip this dose?", [
-    { text: "Cancel", style: "cancel" },
-    {
-      text: "Skip",
-      onPress: async () => {
-        setLoading(true);
-        try {
-          // TypeScript now knows guestId and logId are NOT null here
-          await api.patch(
-            `/dose-logs/${logId}`,
-            { status: "SKIPPED" },
-            guestId, // No more error!
-          );
-          await notifee?.cancelNotification(`dose-${logId}`);
-          setDone("skipped");
-          setTimeout(() => router.dismiss(), 1500);
-        } catch (err) {
-          Alert.alert("Error", "Failed to skip dose.");
-        } finally {
-          setLoading(false);
-        }
+          setLoading(true);
+          try {
+            if (guestId && activeLogId) {
+              await api.patch(
+                `/dose-logs/${activeLogId}`,
+                { status: "SKIPPED" },
+                guestId,
+              );
+              await notifee?.cancelNotification(`dose-${activeLogId}`);
+              setDone("skipped");
+              setTimeout(() => router.dismiss(), 1500);
+            }
+          } catch (err) {
+            Alert.alert("Error", "Failed to skip dose.");
+          } finally {
+            setLoading(false);
+          }
+        },
       },
-    },
-  ]);
-};
+    ]);
+  };
 
  const handleSnooze = async () => {
    setLoading(true);
@@ -190,7 +215,7 @@ const handleSkip = async () => {
 
           {done ? (
             <Text
-              className="text-green-400 text-lg mt-8"
+              className="text-white text-lg mt-8"
               style={{ fontFamily: "Fraunces_700Bold" }}>
               {done === "taken"
                 ? "✓ Marked as Taken"

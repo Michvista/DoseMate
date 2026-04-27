@@ -17,9 +17,17 @@ export const useDoseLogs = (date?: Date) => {
       setLoading(true);
       setError(null);
 
-      // Build query params — filter by date if provided
+      // Build query params — filter by local day boundaries
       const params = new URLSearchParams();
-      if (date) params.set("date", format(date, "yyyy-MM-dd"));
+      if (date) {
+        const start = new Date(date);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(date);
+        end.setHours(23, 59, 59, 999);
+        
+        params.set("dateFrom", start.toISOString());
+        params.set("dateTo", end.toISOString());
+      }
 
       const data = await api.get<APIDoseLog[]>(
         `/dose-logs?${params.toString()}`,
