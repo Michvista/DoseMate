@@ -73,6 +73,12 @@ export async function setupNotificationCategories() {
 // ── 4. Request permissions ────────────────────────────────────────────────────
 export async function requestNotificationPermissions(): Promise<boolean> {
   const { status: existing } = await Notifications.getPermissionsAsync();
+  
+  // Request Notifee permissions too
+  if (notifee) {
+    await notifee.requestPermission();
+  }
+
   if (existing === "granted") return true;
 
   const { status } = await Notifications.requestPermissionsAsync({
@@ -80,7 +86,6 @@ export async function requestNotificationPermissions(): Promise<boolean> {
       allowAlert: true,
       allowBadge: true,
       allowSound: true,
-      // FIX: 'allowAnnouncements' is removed because it's not in the standard Expo type
     },
   });
 

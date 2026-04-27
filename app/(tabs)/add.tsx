@@ -74,7 +74,11 @@ const FORM_FACTORS: {
 // Creates a Date object set to today at h:m — used for default dose times
 const makeTime = (h: number, m = 0) => {
   const d = new Date();
-  d.setHours(h, m, 0, 0); // set hours/minutes, zero out seconds+ms
+  d.setHours(h, m, 0, 0);
+  // If the time has already passed today, move it to tomorrow
+  if (d.getTime() <= Date.now()) {
+    d.setDate(d.getDate() + 1);
+  }
   return d;
 };
 

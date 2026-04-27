@@ -5,7 +5,7 @@
 
 import * as Notifications from "expo-notifications";
 import { notifee, NotifeeConstants } from './notifeeSafe';
-const { TriggerType, AndroidCategory, AndroidImportance, AndroidVisibility } = NotifeeConstants;
+const { TriggerType, AndroidCategory, AndroidImportance, AndroidVisibility, RepeatFrequency } = NotifeeConstants;
 import { Platform } from "react-native";
 import { DOSE_CATEGORY_ID } from "./setup";
 
@@ -35,14 +35,17 @@ export async function scheduleDoseReminder(
     streakCount = 0,
   } = payload;
 
-  // Use Notifee for the Alarm behavior
+  // Ensure timestamp is at least 5 seconds in the future
+  const now = Date.now();
+  const triggerTimestamp = Math.max(scheduledTime.getTime(), now + 5000);
+
   const trigger: TimestampTrigger = {
     type: TriggerType.TIMESTAMP,
-    timestamp: scheduledTime.getTime(),
-    alarmManager: true, // Use AlarmManager for precision
+    timestamp: triggerTimestamp,
+    alarmManager: true, 
   };
 
-  const notificationId = `dose-${doseLogId}`;
+  const notificationId = doseLogId ? `dose-${doseLogId}` : `med-${payload.medicationId}-${scheduledTime.getTime()}`;
 
   await notifee?.createTriggerNotification(
     {
